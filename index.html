@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>即時影音錄製與語音轉文字系統</title>
+  <style>
+    :root {
+      --primary: #2563eb;
+      --primary-hover: #1d4ed8;
+      --danger: #dc2626;
+      --danger-hover: #b91c1c;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --border: #e2e8f0;
+      --text: #1e293b;
+      --text-muted: #64748b;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      padding: 24px 16px;
+      display: flex;
+      justify-content: center;
+    }
+
+    .container {
+      width: 100%;
+      max-width: 860px;
+      background: var(--card-bg);
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      padding: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .video-viewport {
+      width: 100%;
+      background-color: #000;
+      border-radius: 8px;
+      overflow: hidden;
+      aspect-ratio: 16 / 9;
+      position: relative;
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .controls-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      margin: 20px 0;
+    }
+
+    button {
+      padding: 10px 20px;
+      font-size: 15px;
+      font-weight: 600;
+      border-radius: 6px;
+      border: none;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    #startBtn {
+      background-color: var(--primary);
+      color: #fff;
+    }
+    #startBtn:hover:not(:disabled) {
+      background-color: var(--primary-hover);
+    }
+    #startBtn:disabled {
+      background-color: #93c5fd;
+      cursor: not-allowed;
+    }
+
+    #stopBtn {
+      background-color: var(--danger);
+      color: #fff;
+    }
+    #stopBtn:hover:not(:disabled) {
+      background-color: var(--danger-hover);
+    }
+    #stopBtn:disabled {
+      background-color: #fca5a5;
+      cursor: not-allowed;
+    }
+
+    .timer {
+      font-variant-numeric: tabular-nums;
+      font-weight: 700;
+      font-size: 1.1rem;
+      color: var(--danger);
+      display: none;
+    }
+
+    .status-text {
+      font-size: 14px;
+      color: var(--text-muted);
+      margin-left: auto;
+    }
+
+    .section-title {
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+
+    .transcript-container {
+      background-color: #f1f5f9;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      min-height: 160px;
+      max-height: 260px;
+      overflow-y: auto;
+      line-height: 1.6;
+      font-size: 15px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .interim-text {
+      color: #94a3b8;
+      font-style: italic;
+    }
+
+    .feedback-card {
+      margin-top: 20px;
+      padding: 16px;
+      border-radius: 8px;
+      display: none;
+    }
+    .feedback-success {
+      background-color: #f0fdf4;
+      border: 1px solid #bbf7d0;
+      color: #166534;
+    }
+    .feedback-error {
+      background-color: #fef2f2;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+    }
+    .feedback-card a {
+      color: var(--primary);
+      text-decoration: underline;
+      font-weight: 600;
+      margin-right: 12px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>🎥 影音即時錄製與逐字稿辨識</h1>
+
+  <div class="video-viewport">
+    <video id="preview" autoplay muted playsinline></video>
+  </div>
+
+  <div class="controls-bar">
+    <button id="startBtn">🔴 開始錄影與辨識</button>
+    <button id="stopBtn" disabled>⏹️ 停止並上傳雲端</button>
+    <span id="timerDisplay" class="timer">00:00</span>
+    <span id="statusIndicator" class="status-text">相機就緒中...</span>
+  </div>
+
+  <div class="section-title">即時語音辨識輸出：</div>
+  <div class="transcript-container" id="transcriptBox">
+    <span id="finalTranscriptSpan"></span><span id="interimTranscriptSpan" class="interim-text"></span>
+  </div>
+
+  <div id="feedbackCard" class="feedback-card"></div>
+</div>
+
+<script>
+  // ================= 設定區 =================
+  // 請填入 GAS Web App 發布之 Exec URL
+  const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbwVuzP7HgubV_uVuNSUpjFwCeDl6J9D1xMHn7l1N49LrlgOO-7M4FylGMZEDV34721YLw/exec';
+  // ==========================================
+
+  let mediaStream = null;
+  let mediaRecorder = null;
+  let recordedChunks = [];
+  let speechRecognizer = null;
+  let isRecording = false;
+
+  let finalTranscript = '';
+  let timerInterval = null;
+  let secondsElapsed = 0;
+
+  const preview = document.getElementById('preview');
+  const startBtn = document.getElementById('startBtn');
+  const stopBtn = document.getElementById('stopBtn');
+  const timerDisplay = document.getElementById('timerDisplay');
+  const statusIndicator = document.getElementById('statusIndicator');
+  const finalTranscriptSpan = document.getElementById('finalTranscriptSpan');
+  const interimTranscriptSpan = document.getElementById('interimTranscriptSpan');
+  const transcriptBox = document.getElementById('transcriptBox');
+  const feedbackCard = document.getElementById('feedbackCard');
+
+  // 1. 初始化鏡頭與麥克風
+  async function setupCamera() {
+    try {
+      mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 1280 }, height: { ideal: 720 }, frameRate: { ideal: 30 } },
+        audio: true
+      });
+      preview.srcObject = mediaStream;
+      statusIndicator.textContent = '系統待命中';
+    } catch (err) {
+      statusIndicator.textContent = '無法取得鏡頭/麥克風權限：' + err.name;
+      alert('請允許瀏覽器存取相機與麥克風。');
+    }
+  }
+
+  // 2. 初始化 Web Speech API
+  function setupSpeechRecognition() {
+    const SpeechClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SpeechClass) {
+      alert('本功能僅支援 Chromium 核心瀏覽器（如 Google Chrome、Microsoft Edge）。');
+      return null;
+    }
+
+    const recog = new SpeechClass();
+    recog.continuous = true;
+    recog.interimResults = true;
+    recog.lang = 'cmn-Hant-TW'; // 繁體中文
+
+    recog.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; ++i) {
+        if (event.results[i].isFinal) {
+          finalTranscript += event.results[i][0].transcript + ' ';
+          finalTranscriptSpan.textContent = finalTranscript;
+        } else {
+          interim += event.results[i][0].transcript;
+        }
+      }
+      interimTranscriptSpan.textContent = interim;
+      transcriptBox.scrollTop = transcriptBox.scrollHeight;
+    };
+
+    // 處理 Chrome 靜音自動中斷機制
+    recog.onend = () => {
+      if (isRecording) {
+        try { recog.start(); } catch (e) {}
+      }
+    };
+
+    recog.onerror = (event) => {
+      if (event.error !== 'no-speech') {
+        console.warn('Speech recognition warning:', event.error);
+      }
+    };
+
+    return recog;
+  }
+
+  // 3. 計時器模組
+  function startTimer() {
+    secondsElapsed = 0;
+    timerDisplay.textContent = '00:00';
+    timerDisplay.style.display = 'inline';
+    timerInterval = setInterval(() => {
+      secondsElapsed++;
+      const mins = String(Math.floor(secondsElapsed / 60)).padStart(2, '0');
+      const secs = String(secondsElapsed % 60).padStart(2, '0');
+      timerDisplay.textContent = `${mins}:${secs}`;
+    }, 1000);
+  }
+
+  function stopTimer() {
+    clearInterval(timerInterval);
+    timerDisplay.style.display = 'none';
+  }
+
+  // 4. 開始錄製
+  startBtn.onclick = () => {
+    if (!mediaStream) {
+      alert('相機串流未就緒，請重新整理頁面');
+      return;
+    }
+
+    recordedChunks = [];
+    finalTranscript = '';
+    finalTranscriptSpan.textContent = '';
+    interimTranscriptSpan.textContent = '';
+    feedbackCard.style.display = 'none';
+
+    // 限制視訊位元率在 1Mbps，確保檔案輕量且清晰
+    const recorderOptions = {
+      mimeType: 'video/webm;codecs=vp8,opus',
+      videoBitsPerSecond: 1000000
+    };
+
+    try {
+      mediaRecorder = new MediaRecorder(mediaStream, recorderOptions);
+    } catch (e) {
+      mediaRecorder = new MediaRecorder(mediaStream);
+    }
+
+    mediaRecorder.ondataavailable = (event) => {
+      if (event.data && event.data.size > 0) {
+        recordedChunks.push(event.data);
+      }
+    };
+
+    mediaRecorder.start(1000); // 每秒採集一次資料片段
+
+    speechRecognizer = setupSpeechRecognition();
+    if (speechRecognizer) {
+      try { speechRecognizer.start(); } catch (e) {}
+    }
+
+    isRecording = true;
+    startBtn.disabled = true;
+    stopBtn.disabled = false;
+    statusIndicator.textContent = '錄影中...';
+    startTimer();
+  };
+
+  // 5. 停止錄製並傳送至 GAS
+  stopBtn.onclick = () => {
+    isRecording = false;
+    stopTimer();
+    statusIndicator.textContent = '封裝影音資料中...';
+    startBtn.disabled = true;
+    stopBtn.disabled = true;
+
+    if (speechRecognizer) {
+      speechRecognizer.stop();
+    }
+    mediaRecorder.stop();
+
+    mediaRecorder.onstop = () => {
+      const videoBlob = new Blob(recordedChunks, { type: 'video/webm' });
+      const reader = new FileReader();
+
+      reader.onloadend = async () => {
+        statusIndicator.textContent = '正在上傳至 Google Drive...';
+
+        const payload = {
+          videoBase64: reader.result,
+          transcript: finalTranscript.trim()
+        };
+
+        try {
+          // 重要：切勿手動設定 headers: {'Content-Type': 'application/json'}
+          // 傳送純文字字串 Body 可以避開瀏覽器觸發 OPTIONS 預檢請求（Preflight）
+          const response = await fetch(GAS_API_URL, {
+            method: 'POST',
+            redirect: 'follow',
+            body: JSON.stringify(payload)
+          });
+
+          const res = await response.json();
+
+          if (res.status === 'success') {
+            statusIndicator.textContent = '完成上傳';
+            feedbackCard.className = 'feedback-card feedback-success';
+            feedbackCard.innerHTML = `
+              <strong>🎉 檔案已成功存入雲端！</strong><br><br>
+              <a href="${res.videoUrl}" target="_blank" rel="noopener noreferrer">🎬 開啟錄影檔案</a>
+              <a href="${res.textUrl}" target="_blank" rel="noopener noreferrer">📝 開啟逐字稿 TXT</a>
+              <a href="${res.folderUrl}" target="_blank" rel="noopener noreferrer">📁 前往雲端資料夾</a>
+            `;
+            feedbackCard.style.display = 'block';
+          } else {
+            throw new Error(res.message || '後端回傳錯誤');
+          }
+        } catch (err) {
+          statusIndicator.textContent = '上傳失敗';
+          feedbackCard.className = 'feedback-card feedback-error';
+          feedbackCard.textContent = '❌ 上傳發生錯誤：' + err.message;
+          feedbackCard.style.display = 'block';
+        } finally {
+          startBtn.disabled = false;
+        }
+      };
+
+      reader.readAsDataURL(videoBlob);
+    };
+  };
+
+  // 啟動相機
+  setupCamera();
+</script>
+
+</body>
+</html>
